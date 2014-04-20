@@ -12,6 +12,8 @@ Example
   E 2014-04-20T16-52-21+08:00 07982 server.go:123 "abc is nil"
 ```
 
+******
+
 Leveled execution logs for Go.
 
 This is an efficient pure Go implementation of leveled logs in the
