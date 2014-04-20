@@ -96,19 +96,35 @@ func TestInfo(t *testing.T) {
 	}
 }
 
-// Test that the header has the correct format.
-func TestHeader(t *testing.T) {
+// Test that the header has the correct format for UTC
+func TestHeaderUTC(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
 	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
 	timeNow = func() time.Time {
-		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.Local)
+		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.UTC)
 	}
 	Info("test")
 	var line, pid int
-	n, err := fmt.Sscanf(contents(infoLog), "I0102 15:04:05.678901 %d glog_test.go:%d] test\n", &pid, &line)
+	n, err := fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05Z %d glog_test.go:%d test\n", &pid, &line)
 	if n != 2 || err != nil {
-		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
+		t.Errorf("the log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
+	}
+}
+
+// Test that the header also output the correct format with local time
+func TestHeaderLocal(t *testing.T) {
+	setFlags()
+	defer logging.swap(logging.newBuffers())
+	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
+	timeNow = func() time.Time {
+		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.FixedZone(`test`, 28800))
+	}
+	Info("test")
+	var line, pid int
+	n, err := fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05+08:00 %d glog_test.go:%d test\n", &pid, &line)
+	if n != 2 || err != nil {
+		t.Errorf("the log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
 	}
 }
 

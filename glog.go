@@ -516,19 +516,21 @@ header formats a log header as defined by the C++ implementation.
 It returns a buffer containing the formatted header.
 
 Log lines have this form:
-	Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg...
+	L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...
 where the fields are defined as follows:
 	L                A single character, representing the log level (eg 'I' for INFO)
+	yyyy             The year
 	mm               The month (zero padded; ie May is '05')
 	dd               The day (zero padded)
-	hh:mm:ss.uuuuuu  Time in hours, minutes and fractional seconds
+	hh:mm:ss         Time in hours, minutes and seconds
+	Z                Idicator of the time-zone. 'Z' -> UTC time; '+hh:mm' or '-hh:mm' otherwise
 	threadid         The space-padded thread ID as returned by GetTID()
 	file             The file name
 	line             The line number
 	msg              The user-supplied message
 */
 func (l *loggingT) header(s severity) *buffer {
-	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
+	// L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...
 	now := timeNow()
 	_, file, line, ok := runtime.Caller(3) // It's always the same number of frames to the user's call.
 	if !ok {
@@ -550,29 +552,54 @@ func (l *loggingT) header(s severity) *buffer {
 
 	// Avoid Fprintf, for speed. The format is so simple that we can do it quickly by hand.
 	// It's worth about 3X. Fprintf is hard.
-	_, month, day := now.Date()
+	// result will be either
+	// L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...       // UTC
+	// L yyyy-mm-ddThh-mm-ss+hh:mm threadid file:line msg...  // east of UTC
+	// L yyyy-mm-ddThh-mm-ss-hh:mm threadid file:line msg...  // west of UTC
+	year, month, day := now.Date()
 	hour, minute, second := now.Clock()
+	_, timezoneOffset := now.Zone()
+
 	buf.tmp[0] = severityChar[s]
-	buf.twoDigits(1, int(month))
-	buf.twoDigits(3, day)
-	buf.tmp[5] = ' '
-	buf.twoDigits(6, hour)
-	buf.tmp[8] = ':'
-	buf.twoDigits(9, minute)
-	buf.tmp[11] = ':'
-	buf.twoDigits(12, second)
-	buf.tmp[14] = '.'
-	buf.nDigits(6, 15, now.Nanosecond()/1000)
-	buf.tmp[21] = ' '
-	buf.nDigits(5, 22, pid) // TODO: should be TID
-	buf.tmp[27] = ' '
-	buf.Write(buf.tmp[:28])
+	buf.tmp[1] = ' '
+	buf.nDigits(4, 2, year)
+	buf.tmp[6] = '-'
+	buf.twoDigits(7, int(month))
+	buf.tmp[9] = '-'
+	buf.twoDigits(10, day)
+	buf.tmp[12] = 'T'
+	buf.twoDigits(13, hour)
+	buf.tmp[15] = '-'
+	buf.twoDigits(16, minute)
+	buf.tmp[18] = '-'
+	buf.twoDigits(19, second)
+	var nextPos int
+	if timezoneOffset == 0 {
+		buf.tmp[21] = 'Z'
+		nextPos = 22
+	} else {
+		if timezoneOffset < 0 {
+			buf.tmp[21] = '-'
+			timezoneOffset = -timezoneOffset
+		} else {
+			buf.tmp[21] = '+'
+		}
+		offsetHour := timezoneOffset / 3600
+		offsetMinute := timezoneOffset % 60
+		buf.twoDigits(22, offsetHour)
+		buf.tmp[24] = ':'
+		buf.twoDigits(25, offsetMinute)
+		nextPos = 27
+	}
+	buf.tmp[nextPos] = ' '
+	buf.nDigits(5, nextPos + 1, pid) // TODO: should be TID
+	buf.tmp[nextPos+6] = ' '
+	buf.Write(buf.tmp[:nextPos + 7])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
-	buf.tmp[n+1] = ']'
-	buf.tmp[n+2] = ' '
-	buf.Write(buf.tmp[:n+3])
+	buf.tmp[n + 1] = ' '
+	buf.Write(buf.tmp[:n + 2])
 	return buf
 }
 
