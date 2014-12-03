@@ -96,20 +96,49 @@ func TestInfo(t *testing.T) {
 	}
 }
 
-// Test that the header has the correct format for UTC
-func TestHeaderUTC(t *testing.T) {
+// Test that the header has the correct format
+func TestHeader(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
 	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
 	timeNow = func() time.Time {
-		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.UTC)
+		return time.Date(2006, 1, 2, 15, 4, 5, .678901e9, time.Local)
 	}
 	Info("test")
-	var line, pid int
-	n, err := fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05Z %d glog_test.go:%d test\n", &pid, &line)
-	if n != 2 || err != nil {
-		t.Errorf("the log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
+	// try to read back in what we have written
+	// see the log format in glog.go's header() to know what was written
+	var successfulRead int
+	var err error
+	var line, pid, hour, minute int
+	var sign string
+
+	matchZone := true // by default, we are going to check if it isn't
+	_, timezoneOffset := time.Now().Zone()
+	if timezoneOffset == 0 {
+		successfulRead, err = fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05Z %d glog_test.go:%d test\n", &pid, &line)
+	} else {
+		successfulRead, err = fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05%1s%d:%d %d glog_test.go:%d test\n", &sign, &hour, &minute, &pid, &line)
+		expectedSign, expectedHour, expectedMinute := offsetComponents(timezoneOffset)
+		if expectedSign != sign || expectedHour != hour || expectedMinute != minute {
+			matchZone = false
+		}
 	}
+
+	if (timezoneOffset == 0 && successfulRead != 2) || (timezoneOffset != 0 && successfulRead != 5) || !matchZone || err != nil {
+		t.Errorf("log format error: %d elements, error %s:\n%s", successfulRead, err, contents(infoLog))
+	}
+}
+
+func offsetComponents(offset int) (sign string, hour, minute int) {
+	if offset < 0 {
+		sign = `-`
+		offset = -offset
+	} else {
+		sign = `+`
+	}
+	hour = offset / 3600
+	minute = offset % 60
+	return
 }
 
 // Test that the header also output the correct format with local time
