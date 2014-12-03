@@ -177,19 +177,53 @@ func TestHeader(t *testing.T) {
 	timeNow = func() time.Time {
 		return time.Date(2006, 1, 2, 15, 4, 5, .067890e9, time.Local)
 	}
-	pid = 1234
+	var format, want string // the format of the log & what we want to be printed
 	Info("test")
-	var line, pid int
-	n, err := fmt.Sscanf(contents(infoLog), "I 2006-01-02T15-04-05+08:00 %d glog_test.go:%d test\n", &pid, &line)
-	if n != 2 || err != nil {
-		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
+	var successfulRead int
+	var err error
+	var line, pid, hour, minute int
+	var sign string
+
+	matchZone := true // by default, we are going to check if it isn't
+	_, timezoneOffset := time.Now().Zone()
+	if timezoneOffset == 0 {
+		format = "I 2006-01-02T15-04-05Z %d glog_test.go:%d] test\n"
+		successfulRead, err = fmt.Sscanf(contents(infoLog), format, &pid, &line)
+		want = fmt.Sprintf(format, pid, line)
+	} else {
+		format = "I 2006-01-02T15-04-05%1s%02d:%02d %d glog_test.go:%d] test\n"
+		successfulRead, err = fmt.Sscanf(contents(infoLog), format, &sign, &hour, &minute, &pid, &line)
+		expectedSign, expectedHour, expectedMinute := offsetComponents(timezoneOffset)
+		if expectedSign != sign || expectedHour != hour || expectedMinute != minute {
+			matchZone = false
+		}
+		want = fmt.Sprintf(format, sign, hour, minute, pid, line)
 	}
+
+	if (timezoneOffset == 0 && successfulRead != 2) || (timezoneOffset != 0 && successfulRead != 5) || !matchZone || err != nil {
+		t.Errorf("log format error: %d elements, error %s:\n%s", successfulRead, err, contents(infoLog))
+	}
+
+	// In this fork, this is not necesary, since we don't have padded spaces
 	// Scanf treats multiple spaces as equivalent to a single space,
 	// so check for correct space-padding also.
-	want := fmt.Sprintf(format, line)
 	if contents(infoLog) != want {
 		t.Errorf("log format error: got:\n\t%q\nwant:\t%q", contents(infoLog), want)
 	}
+}
+
+// offsetComponents breaks a timezone offset that is not UTC (showing no of offset seconds) into componentes
+// for example: a +08:00 timezone with offset of +8 * 3600 will become (`+`, 8, 0)
+func offsetComponents(offset int) (sign string, hour, minute int) {
+	if offset < 0 {
+		sign = `-`
+		offset = -offset
+	} else {
+		sign = `+`
+	}
+	hour = offset / 3600
+	minute = offset % 60
+	return
 }
 
 // Test that an Error log goes to Warning and Info.
@@ -408,6 +442,8 @@ func TestLogBacktraceAt(t *testing.T) {
 
 func BenchmarkHeader(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		logging.putBuffer(logging.header(infoLog))
+		buf, _, _ := logging.header(infoLog, 0)
+		logging.putBuffer(buf)
+
 	}
 }

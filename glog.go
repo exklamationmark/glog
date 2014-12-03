@@ -572,7 +572,7 @@ func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
 
 	buf.tmp[0] = severityChar[s]
 	buf.tmp[1] = ' '
-	buf.nDigits(4, 2, year)
+	buf.nDigits(4, 2, year, '0')
 	buf.tmp[6] = '-'
 	buf.twoDigits(7, int(month))
 	buf.tmp[9] = '-'
@@ -602,14 +602,15 @@ func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
 		nextPos = 27
 	}
 	buf.tmp[nextPos] = ' '
-	buf.nDigits(5, nextPos+1, pid) // TODO: should be TID
+	buf.nDigits(5, nextPos+1, pid, ' ') // TODO: should be TID
 	buf.tmp[nextPos+6] = ' '
 	buf.Write(buf.tmp[:nextPos+7])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
-	buf.tmp[n+1] = ' '
-	buf.Write(buf.tmp[:n+2])
+	buf.tmp[n+1] = ']'
+	buf.tmp[n+2] = ' '
+	buf.Write(buf.tmp[:n+3])
 	return buf
 }
 
