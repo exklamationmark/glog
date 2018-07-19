@@ -1,16 +1,8 @@
 glog
 ====
 
-## This is a fork
-Changes:
-
-  - Used a different timestamp format for timestamp. It's now similar to RFC3339 (and ISO 8601)
-
-Example
-```
-  I 2014-04-20T16-52-21+08:00 07982 gotime_test.go:33 GET /log.json
-  E 2014-04-20T16-52-21+08:00 07982 server.go:123 "abc is nil"
-```
+This is a fork of github.com/golang/glog.
+It adds the ability to change logging level on the fly, by calling a HTTP handler.
 
 ******
 
@@ -18,7 +10,7 @@ Leveled execution logs for Go.
 
 This is an efficient pure Go implementation of leveled logs in the
 manner of the open source C++ package
-	http://code.google.com/p/google-glog
+	https://github.com/google/glog
 
 By binding methods to booleans it is possible to use the log package
 without paying the expense of evaluating the arguments to the log.

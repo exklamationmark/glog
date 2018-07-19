@@ -60,6 +60,7 @@
 //		hits that statement. (Unlike with -vmodule, the ".go" must be
 //		present.)
 //	-v=0
+//	-glog.V=0 (replaces -v when running with `go test -v`
 //		Enable V-leveled logging at the specified level.
 //	-vmodule=""
 //		The syntax of the argument is a comma-separated list of pattern=N,
@@ -67,6 +68,47 @@
 //		"glob" pattern and N is a V level. For instance,
 //			-vmodule=gopher*=3
 //		sets the V level to 3 in all Go files whose names begin "gopher".
+//
+// This fork implements additional HTTP handlers to allow view/change logging settings on the fly.
+//
+// It can view/change:
+//
+// 	- stderrthreshold
+// 	- v
+//
+// To use, import this package:
+//
+// 	import "code.in.spdigital.io/sp-digital/energy-framework/pkg/glog"
+//
+// Then, add the following lines into your code:
+//
+// 	flag.Parse() 				// parse glog flags
+// 	defer glog.Flush() 			// flush all logs before shutting down
+// 	go func() {
+// 		http.ListenAndServe(":8088", nil)
+// 	}()
+//
+// To view the current settings:
+//
+// 	curl -sX GET '127.0.0.1:8088/debug/log/settings' -v
+//
+// 	< HTTP/1.1 200 OK
+// 	< Content-Type: application/json
+// 	< Date: Mon, 09 Jul 2018 13:34:12 GMT
+// 	< Content-Length: 33
+// 	<
+// 	{"stderrthreshold":"INFO","v":2}
+//
+// To change logging settings:
+//
+// 	curl -sX POST '127.0.0.1:8088/debug/log/settings' -d '{"stderrthreshold":"INFO","v":2}' -v
+//
+// 	< HTTP/1.1 200 OK
+// 	< Date: Mon, 09 Jul 2018 13:36:30 GMT
+// 	< Content-Length: 0
+// 	<
+//
+// Note that levelled logging is only possible when stderrthreshold is set to INFO.
 //
 package glog
 
@@ -399,6 +441,7 @@ func init() {
 	flag.BoolVar(&logging.toStderr, "logtostderr", false, "log to standard error instead of files")
 	flag.BoolVar(&logging.alsoToStderr, "alsologtostderr", false, "log to standard error as well as files")
 	flag.Var(&logging.verbosity, "v", "log level for V logs")
+	flag.Var(&logging.verbosity, "glog.v", "log level for V logs (overrides -v, uses when conflicting with 'go test -v'")
 	flag.Var(&logging.stderrThreshold, "stderrthreshold", "logs at or above this threshold go to stderr")
 	flag.Var(&logging.vmodule, "vmodule", "comma-separated list of pattern=N settings for file-filtered logging")
 	flag.Var(&logging.traceLocation, "log_backtrace_at", "when logging hits line file:N, emit a stack trace")
@@ -521,14 +564,12 @@ It returns a buffer containing the formatted header and the user's file and line
 The depth specifies how many stack frames above lives the source line to be identified in the log message.
 
 Log lines have this form:
-	L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...
+	Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg...
 where the fields are defined as follows:
 	L                A single character, representing the log level (eg 'I' for INFO)
-	yyyy             The year
 	mm               The month (zero padded; ie May is '05')
 	dd               The day (zero padded)
-	hh:mm:ss         Time in hours, minutes and seconds
-	Z                Idicator of the time-zone. 'Z' -> UTC time; '+hh:mm' or '-hh:mm' otherwise
+	hh:mm:ss.uuuuuu  Time in hours, minutes and fractional seconds
 	threadid         The space-padded thread ID as returned by GetTID()
 	file             The file name
 	line             The line number
@@ -550,7 +591,6 @@ func (l *loggingT) header(s severity, depth int) (*buffer, string, int) {
 
 // formatHeader formats a log header using the provided file name and line number.
 func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
-	// L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...
 	now := timeNow()
 	if line < 0 {
 		line = 0 // not a real line number, but acceptable to someDigits
@@ -562,49 +602,24 @@ func (l *loggingT) formatHeader(s severity, file string, line int) *buffer {
 
 	// Avoid Fprintf, for speed. The format is so simple that we can do it quickly by hand.
 	// It's worth about 3X. Fprintf is hard.
-	// result will be either
-	// L yyyy-mm-ddThh-mm-ssZ threadid file:line msg...       // UTC
-	// L yyyy-mm-ddThh-mm-ss+hh:mm threadid file:line msg...  // east of UTC
-	// L yyyy-mm-ddThh-mm-ss-hh:mm threadid file:line msg...  // west of UTC
-	year, month, day := now.Date()
+	_, month, day := now.Date()
 	hour, minute, second := now.Clock()
-	_, timezoneOffset := now.Zone()
-
+	// Lmmdd hh:mm:ss.uuuuuu threadid file:line]
 	buf.tmp[0] = severityChar[s]
-	buf.tmp[1] = ' '
-	buf.nDigits(4, 2, year, '0')
-	buf.tmp[6] = '-'
-	buf.twoDigits(7, int(month))
-	buf.tmp[9] = '-'
-	buf.twoDigits(10, day)
-	buf.tmp[12] = 'T'
-	buf.twoDigits(13, hour)
-	buf.tmp[15] = '-'
-	buf.twoDigits(16, minute)
-	buf.tmp[18] = '-'
-	buf.twoDigits(19, second)
-	var nextPos int
-	if timezoneOffset == 0 {
-		buf.tmp[21] = 'Z'
-		nextPos = 22
-	} else {
-		if timezoneOffset < 0 {
-			buf.tmp[21] = '-'
-			timezoneOffset = -timezoneOffset
-		} else {
-			buf.tmp[21] = '+'
-		}
-		offsetHour := timezoneOffset / 3600
-		offsetMinute := timezoneOffset % 60
-		buf.twoDigits(22, offsetHour)
-		buf.tmp[24] = ':'
-		buf.twoDigits(25, offsetMinute)
-		nextPos = 27
-	}
-	buf.tmp[nextPos] = ' '
-	buf.nDigits(5, nextPos+1, pid, ' ') // TODO: should be TID
-	buf.tmp[nextPos+6] = ' '
-	buf.Write(buf.tmp[:nextPos+7])
+	buf.twoDigits(1, int(month))
+	buf.twoDigits(3, day)
+	buf.tmp[5] = ' '
+	buf.twoDigits(6, hour)
+	buf.tmp[8] = ':'
+	buf.twoDigits(9, minute)
+	buf.tmp[11] = ':'
+	buf.twoDigits(12, second)
+	buf.tmp[14] = '.'
+	buf.nDigits(6, 15, now.Nanosecond()/1000, '0')
+	buf.tmp[21] = ' '
+	buf.nDigits(7, 22, pid, ' ') // TODO: should be TID
+	buf.tmp[29] = ' '
+	buf.Write(buf.tmp[:30])
 	buf.WriteString(file)
 	buf.tmp[0] = ':'
 	n := buf.someDigits(1, line)
@@ -704,7 +719,10 @@ func (l *loggingT) output(s severity, buf *buffer, file string, line int, alsoTo
 		}
 	}
 	data := buf.Bytes()
-	if l.toStderr {
+	if !flag.Parsed() {
+		os.Stderr.Write([]byte("ERROR: logging before flag.Parse: "))
+		os.Stderr.Write(data)
+	} else if l.toStderr {
 		os.Stderr.Write(data)
 	} else {
 		if alsoToStderr || l.alsoToStderr || s >= l.stderrThreshold.get() {
